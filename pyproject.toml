@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "dominode-bootstrapper"
+version = "0.2.0"
+description = ""
+authors = ["Ricardo Garcia Silva <ricardo@kartoza.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+typer = "^0.3.0"
+httpx = "^0.14.1"
+
+[tool.poetry.dev-dependencies]
+pytest = "^5.2"
+docker = "^4.2.2"
+psycopg2-binary = "^2.8.5"
+sqlalchemy = "^1.3.18"
+ipython = "^7.16.1"
+pytest-raises = "^0.11"
+minio = "^5.0.10"
+
+[tool.poetry.scripts]
+dominode-admin = 'dominode_bootstrapper.dominodeadmin:app'
+
+[build-system]
+requires = ["poetry>=0.12"]
+build-backend = "poetry.masonry.api"

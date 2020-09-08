@@ -1,0 +1,33 @@
+# Test the bootstrapper with:
+#
+# docker-compose up -d
+#
+# docker-compose run --name test-bootstrap --rm bootstrapper bootstrap
+#
+# Alternatively, bootstrap individual components:
+#
+# docker-compose run --name test-bootstrap-db --rm bootstrapper db bootstrap
+# docker-compose run --name test-bootstrap-minio --rm bootstrapper minio bootstrap
+#
+# docker-compose down
+
+version: "3.8"
+
+services:
+
+  db:
+    image: postgis/postgis:12-3.0-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGDATA: /var/lib/postgresql/data/pgdata
+
+  minio:
+    image: minio/minio
+    command: "server /data"
+    environment:
+      MINIO_ACCESS_KEY: myuser
+      MINIO_SECRET_KEY: mypassword
+
+  bootstrapper:
+    image: kartoza/dominode_bootstrapper:0.2.0
