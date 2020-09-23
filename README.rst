@@ -10,7 +10,7 @@ Install
 
 This uses `poetry`_, so clone this project, install poetry and then::
 
-    cd extra/dominode-bootstrapper
+    cd dominode-bootstrapper
     poetry install
 
 
