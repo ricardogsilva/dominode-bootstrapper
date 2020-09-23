@@ -55,10 +55,10 @@ def bootstrap(
     )
     geonodeadmin.bootstrap(
         geonode_base_url=config['geonode']['base_url'],
-        geonode_username=config['geonode']['admin_username'],
-        geonode_password=config['geonode']['admin_password'],
+        geonode_admin_username=config['geonode']['admin_username'],
+        geonode_admin_password=config['geonode']['admin_password'],
         geoserver_base_url=config['geoserver']['base_url'],
-        geoserver_username=config['geoserver']['admin_username'],
-        geoserver_password=config['geoserver']['admin_password']
+        geoserver_admin_username=config['geoserver']['admin_username'],
+        geoserver_admin_password=config['geoserver']['admin_password']
     )
     typer.echo('Done!')
