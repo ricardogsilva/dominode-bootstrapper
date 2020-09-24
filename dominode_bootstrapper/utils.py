@@ -50,9 +50,11 @@ def load_config(
     return config
 
 
-def get_config_from_env() -> typing.Dict[str, typing.Dict[str, str]]:
+def get_config_from_env(
+        environment: typing.Optional[typing.Dict] = os.environ
+) -> typing.Dict[str, typing.Dict[str, str]]:
     result = {}
-    for key, value in os.environ.items():
+    for key, value in environment.items():
         if key.startswith('DOMINODE__DEPARTMENT__'):
             try:
                 department, config_key = key.split('__')[2:]
@@ -62,22 +64,14 @@ def get_config_from_env() -> typing.Dict[str, typing.Dict[str, str]]:
             section_name = f'{department.lower()}-department'
             department_section = result.setdefault(section_name, {})
             department_section[config_key.lower()] = value
-        elif key.startswith('DOMINODE__DB__'):
+        elif key.startswith('DOMINODE__'):
             try:
-                config_key = key.split('__')[-1]
+                section, config_key = [i.lower() for i in key.split('__')[1:]]
             except ValueError:
                 typer.echo(f'Could not read variable {key}, ignoring...')
                 continue
-            db_section = result.setdefault('db', {})
-            db_section[config_key.lower()] = value
-        elif key.startswith('DOMINODE__MINIO__'):
-            try:
-                config_key = key.split('__')[-1]
-            except ValueError:
-                typer.echo(f'Could not read variable {key}, ignoring...')
-                continue
-            minio_section = result.setdefault('minio', {})
-            minio_section[config_key.lower()] = value
+            conf_section = result.setdefault(section, {})
+            conf_section[config_key] = value
     return result
 
 
