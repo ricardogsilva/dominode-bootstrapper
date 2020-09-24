@@ -34,7 +34,18 @@ def bootstrap(
         minio_alias: typing.Optional[str] = 'dominode_bootstrapper',
         minio_host: typing.Optional[str] = config['minio']['host'],
         minio_port: typing.Optional[int] = config['minio']['port'],
-        minio_protocol: typing.Optional[str] = config['minio']['protocol']
+        minio_protocol: typing.Optional[str] = config['minio']['protocol'],
+        geonode_base_url: typing.Optional[str] = config['geonode']['base_url'],
+        geonode_admin_username: typing.Optional[str] = config[
+            'geonode']['admin_username'],
+        geonode_admin_password: typing.Optional[str] = config[
+            'geonode']['admin_password'],
+        geoserver_base_url: typing.Optional[str] = config[
+            'geoserver']['base_url'],
+        geoserver_admin_username: typing.Optional[str] = config[
+            'geoserver']['admin_username'],
+        geoserver_admin_password: typing.Optional[str] = config[
+            'geoserver']['admin_password'],
 ):
     typer.echo('Bootstrapping DomiNode database...')
     dbadmin.bootstrap(
@@ -54,11 +65,11 @@ def bootstrap(
         minio_protocol
     )
     geonodeadmin.bootstrap(
-        geonode_base_url=config['geonode']['base_url'],
-        geonode_admin_username=config['geonode']['admin_username'],
-        geonode_admin_password=config['geonode']['admin_password'],
-        geoserver_base_url=config['geoserver']['base_url'],
-        geoserver_admin_username=config['geoserver']['admin_username'],
-        geoserver_admin_password=config['geoserver']['admin_password']
+        geonode_base_url=geonode_base_url,
+        geonode_admin_username=geonode_admin_username,
+        geonode_admin_password=geonode_admin_password,
+        geoserver_base_url=geoserver_base_url,
+        geoserver_admin_username=geoserver_admin_username,
+        geoserver_admin_password=geoserver_admin_password
     )
     typer.echo('Done!')
