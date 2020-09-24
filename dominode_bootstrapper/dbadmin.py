@@ -3,6 +3,14 @@
 This script adds some functions to perform DomiNode related tasks in a more
 expedite manner than using the bare `psql` client
 
+
+ricardosilva
+lsduser1
+ppduser1
+
+INSERT INTO lsd_topomaps.qgis_projects
+SELECT * FROM lsd_staging.qgis_projects WHERE name = 'this'
+
 """
 
 import typing
@@ -28,6 +36,7 @@ app = typer.Typer(
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 config = utils.load_config()
+LSD_TOPOMAP_EDITOR_ROLE_NAME = f'lsd_topomap_editor'
 
 
 @app.command()
@@ -45,10 +54,8 @@ def bootstrap(
 
     """
 
-    db_url = (
-        f'postgresql://{db_admin_username}:{db_admin_password}@'
-        f'{db_host}:{db_port}/{db_name or db_admin_username}'
-    )
+    db_url = get_db_url(
+        db_admin_username, db_admin_password, db_host, db_port, db_name)
     dominode_staging_schema_name = 'dominode_staging'
     with get_db_connection(db_url) as db_connection:
         typer.echo('Creating general roles...')
@@ -56,18 +63,17 @@ def bootstrap(
             'admin', db_connection, other_options=('CREATEDB', 'CREATEROLE'))
         create_role(
             'replicator', db_connection, other_options=('REPLICATION',))
-        generic_user_name = 'dominode_user'
-        create_role(generic_user_name, db_connection)
-        generic_editor_role_name = 'editor'
+        create_role(config['dominode']['generic_user_name'], db_connection)
+
         create_role(
-            generic_editor_role_name,
+            config['dominode']['generic_editor_role_name'],
             db_connection,
             other_options=('IN ROLE dominode_user', )
         )
         typer.echo(f'creating {dominode_staging_schema_name!r} schema...')
         create_schema(
             dominode_staging_schema_name,
-            generic_editor_role_name,
+            config['dominode']['generic_editor_role_name'],
             db_connection
         )
         typer.echo(
@@ -77,43 +83,23 @@ def bootstrap(
         grant_schema_permissions(
             dominode_staging_schema_name,
             ('USAGE', 'CREATE'),
-            generic_user_name, db_connection
+            config['dominode']['generic_user_name'], db_connection
         )
         for department in utils.get_departments(config):
-            user_role = f'{department}_user'
-            editor_role = f'{department}_editor'
-            typer.echo(f'Creating role {user_role!r}...')
-            create_role(
-                user_role, db_connection, parent_roles=('dominode_user',))
-            typer.echo(f'Creating role {editor_role!r}...')
-            create_role(
-                editor_role, db_connection, parent_roles=('editor', user_role))
-            typer.echo('Creating staging schemas...')
-            staging_schema_name = f'{department}_staging'
-            typer.echo(f'Creating {staging_schema_name!r} schema...')
-            create_schema(staging_schema_name, editor_role, db_connection)
-            typer.echo(f'Granting permissions...')
-            grant_schema_permissions(
-                staging_schema_name,
-                ('USAGE', 'CREATE'),
-                user_role,
-                db_connection
-            )
-            typer.echo(f'Adding GeoServer user accounts...')
-            geoserver_password = config[f'{department}-department'].get(
-                'geoserver_password', 'dominode')
-            create_user(
-                utils.get_geoserver_db_username(department),
-                geoserver_password,
+            typer.echo(f'Bootstrapping {department} department...')
+            bootstrap_department(
                 db_connection,
-                parent_roles=[generic_user_name]
+                department,
+                config['dominode']['generic_user_name']
             )
+
         typer.echo(f'Modifying access permissions on public schema...')
         db_connection.execute(
             text('REVOKE CREATE ON SCHEMA public FROM public'))
         db_connection.execute(
             text(
-                f'GRANT CREATE ON SCHEMA public TO {generic_editor_role_name}'
+                f'GRANT CREATE ON SCHEMA public TO '
+                f'{config["dominode"]["generic_editor_role_name"]}'
             ),
         )
         typer.echo(f'Executing remaining SQL commands...')
@@ -125,26 +111,49 @@ def bootstrap(
 
 
 @app.command()
+def add_department(
+        department: str,
+        db_admin_username: typing.Optional[str] = config['db']['admin_username'],
+        db_admin_password: typing.Optional[str] = config['db']['admin_password'],
+        db_name: typing.Optional[str] = config['db']['name'],
+        db_host: str = config['db']['host'],
+        db_port: int = config['db']['port'],
+):
+    db_url = get_db_url(
+        db_admin_username, db_admin_password, db_host, db_port, db_name)
+    with get_db_connection(db_url) as db_connection:
+        bootstrap_department(
+            db_connection,
+            department,
+            config['dominode']['generic_user_name']
+        )
+
+
+@app.command()
 def add_department_user(
         username: str,
         password: str,
         departments: typing.List[str],
         role: typing.Optional[UserRole] = UserRole.REGULAR_DEPARTMENT_USER,
+        is_topomap_editor: typing.Optional[bool] = False,
         db_admin_username: typing.Optional[str] = config['db']['admin_username'],
         db_admin_password: typing.Optional[str] = config['db']['admin_password'],
         db_host: typing.Optional[str] = config['db']['host'],
         db_port: typing.Optional[int] = config['db']['port'],
         db_name: typing.Optional[str] = config['db']['name'],
 ):
-    db_url = (
-        f'postgresql://{db_admin_username}:{db_admin_password}@'
-        f'{db_host}:{db_port}/{db_name or db_admin_username}'
-    )
+    db_url = get_db_url(
+        db_admin_username, db_admin_password, db_host, db_port, db_name)
     role_suffix = 'editor' if role == UserRole.EDITOR else 'user'
     parent_roles = [f'{dep}_{role_suffix}' for dep in departments]
+    if is_topomap_editor:
+        parent_roles.append(LSD_TOPOMAP_EDITOR_ROLE_NAME)
+    typer.echo(
+        f'Adding {username!r} user with parent roles {parent_roles!r}...')
     with get_db_connection(db_url) as db_connection:
         create_user(
             username, password, db_connection, parent_roles=parent_roles)
+    typer.echo('Done!')
 
 
 def create_role(
@@ -227,3 +236,115 @@ def get_db_connection(db_url: str):
                 sleep(sleep_for)
             else:
                 raise
+
+
+def bootstrap_department(
+        db_connection,
+        department: str,
+        generic_user_name: str
+):
+    user_role = f'{department}_user'
+    editor_role = f'{department}_editor'
+    typer.echo(f'Creating role {user_role!r}...')
+    create_role(
+        user_role, db_connection, parent_roles=('dominode_user',))
+    typer.echo(f'Creating role {editor_role!r}...')
+    create_role(
+        editor_role, db_connection, parent_roles=('editor', user_role))
+    staging_schema_name = f'{department}_staging'
+    typer.echo(f'Creating {staging_schema_name!r} schema...')
+    create_schema(staging_schema_name, editor_role, db_connection)
+    typer.echo(f'Setting schema permissions...')
+    grant_schema_permissions(
+        staging_schema_name,
+        ('USAGE', 'CREATE'),
+        user_role,
+        db_connection
+    )
+    typer.echo(f'Creating qgis_projects table...')
+    create_qgis_projects_table(db_connection, staging_schema_name, user_role)
+    typer.echo(f'Adding GeoServer user account...')
+    geoserver_password = config[
+        f'{department}-department']['geoserver_password']
+    create_user(
+        utils.get_geoserver_db_username(department),
+        geoserver_password,
+        db_connection,
+        parent_roles=[generic_user_name]
+    )
+    if department == 'lsd':
+        bootstrap_lsd_topomaps(db_connection, user_role)
+
+
+def create_qgis_projects_table(
+        db_connection,
+        schema: str,
+        owner: str,
+        revoke_owner_updates: typing.Optional[bool] = False,
+        grant_select_to: typing.Optional[str] = None,
+):
+    table_qualified_name = f'{schema}.qgis_projects'
+    db_connection.execute(
+        text(
+            f'CREATE TABLE IF NOT EXISTS {table_qualified_name} ('
+            f'name text not null constraint qgis_projects_pkey primary key ,'
+            f'metadata jsonb,'
+            f'content bytea'
+            f')'
+        )
+    )
+    db_connection.execute(
+        text(f'ALTER TABLE {table_qualified_name} OWNER TO {owner}')
+    )
+    if revoke_owner_updates:
+        db_connection.execute(
+            text(f'REVOKE UPDATE ON {table_qualified_name} FROM {owner}')
+        )
+    if grant_select_to:
+        db_connection.execute(
+            text(
+                f'GRANT SELECT ON {table_qualified_name} TO {grant_select_to}')
+        )
+
+
+def bootstrap_lsd_topomaps(db_connection, user_role_name: str):
+    typer.echo(f'Creating role {LSD_TOPOMAP_EDITOR_ROLE_NAME!r}...')
+    create_role(
+        LSD_TOPOMAP_EDITOR_ROLE_NAME,
+        db_connection,
+        parent_roles=(user_role_name,)
+    )
+    schema_name = f'lsd_topomaps'
+    typer.echo(f'Creating {schema_name!r} schema...')
+    create_schema(
+        schema_name,
+        LSD_TOPOMAP_EDITOR_ROLE_NAME,
+        db_connection
+    )
+    typer.echo(f'Setting permissions on schema {schema_name!r}...')
+    grant_schema_permissions(
+        schema_name,
+        ('USAGE',),
+        user_role_name,
+        db_connection
+    )
+    create_qgis_projects_table(
+        db_connection,
+        schema_name,
+        LSD_TOPOMAP_EDITOR_ROLE_NAME,
+        revoke_owner_updates=True,
+        grant_select_to=user_role_name
+    )
+
+
+def get_db_url(
+        username: str,
+        password: str,
+        host: str,
+        port: typing.Union[str, int],
+        db_name: typing.Optional[str] = None
+) -> str:
+    return (
+        f'postgresql://{username}:{password}@'
+        f'{host}:{port}/{db_name or username}'
+    )
