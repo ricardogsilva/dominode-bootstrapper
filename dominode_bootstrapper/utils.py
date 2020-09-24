@@ -103,6 +103,9 @@ def _get_default_config():
     config['geoserver']['base_url'] = 'http://localhost/geoserver'
     config['geoserver']['admin_username'] = 'admin'
     config['geoserver']['admin_password'] = 'geoserver'
+    config['dominode'] = {}
+    config['dominode']['generic_user_name'] = 'dominode_user'
+    config['dominode']['generic_editor_role_name'] = 'editor'
     default_departments = (
         'ppd',
         'lsd',
