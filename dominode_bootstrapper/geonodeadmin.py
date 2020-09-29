@@ -28,6 +28,7 @@ config = utils.load_config()
 REPO_ROOT = Path(__file__).resolve().parents[3]
 _ANY = '*'
 INTERNAL_GEONODE_GROUP_NAME = 'dominode-internal'
+EDITOR_GROUP_CATEGORY_NAME = 'dominode-editor'
 
 
 class GeoNodeManager:
@@ -42,8 +43,6 @@ class GeoNodeManager:
             base_url: str = config['geonode']['base_url'],
             username: str = config['geonode']['admin_username'],
             password: str = config['geonode']['admin_password'],
-            geoserver_client_id: str = None,
-            geoserver_client_secret: str = None,
     ):
         self.client = client
         self.base_url = (
@@ -61,22 +60,14 @@ class GeoNodeManager:
     def logout(self) -> httpx.Response:
         return self._modify_server_state(f'{self.base_url}/account/logout/')
 
-    def get_existing_groups(
+    def get_existing_group_profiles(
             self,
             pagination_url: str = None
     ) -> typing.List[typing.Dict]:
         """Retrieve existing groups via GeoNode's REST API"""
-        url = pagination_url or f'{self.base_url}/api/group_profile/'
-        response = self.client.get(url)
-        response.raise_for_status()
-        payload = response.json()
-        group_profiles: typing.List = payload['objects']
-        next_page = payload['meta']['next']
-        if next_page is not None:
-            group_profiles.extend(self.get_existing_groups(next_page))
-        return group_profiles
+        return self._list_items_from_geonode_rest_api('/group_profile')
 
-    def get_group(self, name: str) -> typing.Optional[typing.Dict]:
+    def get_group_profile(self, name: str) -> typing.Optional[typing.Dict]:
         response = self.client.get(
             f'{self.base_url}/api/group_profile/',
             params={
@@ -87,7 +78,28 @@ class GeoNodeManager:
         matched_groups = response.json().get('objects')
         return matched_groups[0] if len(matched_groups) > 0 else None
 
-    def create_group(self, name: str, description: str) -> httpx.Response:
+    def create_group_profile_category(
+            self,
+            name: str,
+            description: str
+    ) -> typing.Optional[int]:
+        url_fragment = '/en/admin/groups/groupcategory/'
+        return self._modify_server_state(
+            f'{self.base_url}{url_fragment}add/',
+            name_en=name,
+            description=description,
+            _save='Save'
+        )
+
+    def get_existing_group_categories(self):
+        return self._list_items_from_geonode_rest_api('/groupcategory')
+
+    def create_group_profile(
+            self,
+            name: str,
+            description: str,
+            category: typing.Optional[int] = None
+    ) -> httpx.Response:
         """Create a new GeoNode group.
 
         The GeoNode REST API does not have a way to create new groups. As such,
@@ -96,11 +108,17 @@ class GeoNodeManager:
 
         """
 
+        request_kwargs = {
+            'title': name,
+            'description': description,
+            'access': 'public-invite',
+        }
+        if category is not None:
+            request_kwargs['categories'] = category
+
         return self._modify_server_state(
             f'{self.base_url}/groups/create/',
-            title=name,
-            description=description,
-            access='public-invite'
+            **request_kwargs
         )
 
     def add_user(self, username: str, password: str, group: str):
@@ -119,6 +137,21 @@ class GeoNodeManager:
         )
         added_to_group_response.raise_for_status()
 
+    def _list_items_from_geonode_rest_api(
+            self,
+            endpoint: str,
+            pagination_url: str = None
+    ) -> typing.List[typing.Dict]:
+        """Retrieve existing group categories via GeoNode's REST API"""
+        url = pagination_url or f'{self.base_url}/api{endpoint}/'
+        response = self.client.get(url)
+        response.raise_for_status()
+        payload = response.json()
+        objects: typing.List = payload['objects']
+        next_page = payload['meta']['next']
+        if next_page is not None:
+            objects.extend(self.get_existing_group_profiles(next_page))
+        return objects
 
     def _modify_server_state(
             self,
@@ -332,7 +365,20 @@ def bootstrap(
             geonode_admin_username, geonode_admin_password
         )
         geonode_manager.login()
-        existing_groups = geonode_manager.get_existing_groups()
+        editor_category_pk = get_editor_category_pk(geonode_manager)
+        if editor_category_pk is None:
+            typer.echo(
+                f'Creating group category {EDITOR_GROUP_CATEGORY_NAME!r}...')
+            geonode_manager.create_group_profile_category(
+                EDITOR_GROUP_CATEGORY_NAME,
+                (
+                    'Groups with this category are allowed to sync '
+                    'GeoServer layers'
+                )
+            )
+            editor_category_pk = get_editor_category_pk(geonode_manager)
+
+        existing_groups = geonode_manager.get_existing_group_profiles()
         existing_group_names = [g.get('title') for g in existing_groups]
         geoserver_manager = GeoServerManager(
             client, geoserver_base_url,
@@ -352,6 +398,7 @@ def bootstrap(
                 if geonode_group_name not in existing_group_names:
                     add_department(
                         department=department,
+                        editor_category_pk=editor_category_pk,
                         geonode_manager=geonode_manager,
                         geoserver_manager=geoserver_manager,
                         postgis_db_name=db_name,
@@ -365,7 +412,7 @@ def bootstrap(
                         f'bootstrapped, skipping...'
                     )
         typer.echo(f'Creating group {INTERNAL_GEONODE_GROUP_NAME!r}...')
-        geonode_manager.create_group(
+        geonode_manager.create_group_profile(
             INTERNAL_GEONODE_GROUP_NAME,
             'A group for internal DomiNode users'
         )
@@ -376,7 +423,7 @@ def bootstrap(
 def add_department_user(
         username: str,
         password: str,
-        department: str,
+        departments: typing.List[str],
         role: typing.Optional[UserRole] = UserRole.REGULAR_DEPARTMENT_USER,
         geonode_base_url: str = config['geonode']['base_url'],
         geonode_admin_username: str = config['geonode']['admin_username'],
@@ -389,14 +436,17 @@ def add_department_user(
         )
         manager.login()
         if role == UserRole.EDITOR:
-            name = get_geonode_group_name(department)
+            group_names = [get_geonode_group_name(dep) for dep in departments]
         else:
-            name = INTERNAL_GEONODE_GROUP_NAME
-        group = manager.get_group(name)
-        if group is None:
-            raise RuntimeError(f'group {name!r} not found')
-        typer.echo(f'Adding user {username!r} to group {group["title"]}...')
-        manager.add_user(username, password, group['slug'])
+            group_names = [INTERNAL_GEONODE_GROUP_NAME]
+        for name in group_names:
+            typer.echo(f'processing group {name!r}...')
+            group = manager.get_group_profile(name)
+            if group is None:
+                raise RuntimeError(f'group {name!r} not found')
+            typer.echo(
+                f'Adding user {username!r} to group {group["title"]}...')
+            manager.add_user(username, password, group['slug'])
         manager.logout()
     typer.echo('Done!')
 
@@ -409,8 +459,21 @@ def get_geoserver_group_name(department: str) -> str:
     return get_geonode_group_name(department).upper()
 
 
+def get_editor_category_pk(
+        geonode_manager: GeoNodeManager) -> typing.Optional[int]:
+    existing_categories = geonode_manager.get_existing_group_categories()
+    for resource in existing_categories:
+        if resource.get('name') == EDITOR_GROUP_CATEGORY_NAME:
+            result = resource['id']
+            break
+    else:
+        result = None
+    return result
+
+
 def add_department(
         department: str,
+        editor_category_pk: int,
         geonode_manager: GeoNodeManager,
         geoserver_manager: GeoServerManager,
         postgis_db_name: str,
@@ -420,12 +483,13 @@ def add_department(
 ):
     geonode_group_name = get_geonode_group_name(department)
     typer.echo(f'Creating geonode group {geonode_group_name!r}...')
-    geonode_manager.create_group(
+    geonode_manager.create_group_profile(
         geonode_group_name,
         description=(
             f'A group for users that are allowed to administer '
             f'{department} datasets'
-        )
+        ),
+        category=editor_category_pk
     )
     _bootstrap_department_in_geoserver(
         geoserver_manager,
