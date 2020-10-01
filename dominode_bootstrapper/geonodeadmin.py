@@ -78,6 +78,18 @@ class GeoNodeManager:
         matched_groups = response.json().get('objects')
         return matched_groups[0] if len(matched_groups) > 0 else None
 
+    def user_exists(self, username: str) -> bool:
+        """Check if user already exists via GeoNode's REST API"""
+        response = self.client.get(
+            f'{self.base_url}/api/profiles/',
+            params={
+                'username': username
+            }
+        )
+        response.raise_for_status()
+        matched_users = response.json().get('meta', {}).get('total_count', 0)
+        return True if matched_users > 0 else False
+
     def create_group_profile_category(
             self,
             name: str,
@@ -121,7 +133,7 @@ class GeoNodeManager:
             **request_kwargs
         )
 
-    def add_user(self, username: str, password: str, group: str):
+    def add_user(self, username: str, password: str):
         user_added_response = self._modify_server_state(
             f'{self.base_url}/en/admin/people/profile/add/',
             username=username,
@@ -130,6 +142,8 @@ class GeoNodeManager:
             _save='Save'
         )
         user_added_response.raise_for_status()
+
+    def add_user_to_group(self, username: str, group: str):
         added_to_group_response = self._modify_server_state(
             f'{self.base_url}/groups/group/{group}/members_add/',
             csrf_token_url=f'{self.base_url}/groups/group/{group}/members/',
@@ -439,6 +453,11 @@ def add_department_user(
             group_names = [get_geonode_group_name(dep) for dep in departments]
         else:
             group_names = [INTERNAL_GEONODE_GROUP_NAME]
+        if not manager.user_exists(username):
+            typer.echo(f'Creating user {username!r}...')
+            manager.add_user(username, password)
+        else:
+            typer.echo(f'user {username!r} already exists')
         for name in group_names:
             typer.echo(f'processing group {name!r}...')
             group = manager.get_group_profile(name)
@@ -446,7 +465,7 @@ def add_department_user(
                 raise RuntimeError(f'group {name!r} not found')
             typer.echo(
                 f'Adding user {username!r} to group {group["title"]}...')
-            manager.add_user(username, password, group['slug'])
+            manager.add_user_to_group(username, group['slug'])
         manager.logout()
     typer.echo('Done!')
 
