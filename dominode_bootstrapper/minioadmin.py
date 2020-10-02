@@ -272,7 +272,7 @@ class DomiNodeDepartment:
 def add_department_user(
         user_access_key: str,
         user_secret_key: str,
-        department_name: str,
+        department_names: typing.List[str],
         role: typing.Optional[UserRole] = UserRole.REGULAR_DEPARTMENT_USER,
         access_key: typing.Optional[str] = config['minio']['admin_access_key'],
         secret_key: typing.Optional[str] = config['minio']['admin_secret_key'],
@@ -289,11 +289,17 @@ def add_department_user(
 
     """
 
-    department = DomiNodeDepartment(
-        department_name, alias, access_key, secret_key, host,
-        port, protocol
-    )
-    return department.add_user(user_access_key, user_secret_key, role)
+    for department_name in department_names:
+        typer.echo(
+            f'Adding user {user_access_key!r} to department '
+            f'{department_name!r}...'
+        )
+        department = DomiNodeDepartment(
+            department_name, alias, access_key, secret_key, host,
+            port, protocol
+        )
+        department.add_user(user_access_key, user_secret_key, role)
+    typer.echo('Done!')
 
 
 @app.command()
