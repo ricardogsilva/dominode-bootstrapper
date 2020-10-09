@@ -85,6 +85,12 @@ def bootstrap(
             ('USAGE', 'CREATE'),
             config['dominode']['generic_user_name'], db_connection
         )
+        typer.echo(f'Creating qgis_projects table...')
+        create_qgis_projects_table(
+            db_connection,
+            dominode_staging_schema_name,
+            config['dominode']['generic_user_name']
+        )
         for department in utils.get_departments(config):
             typer.echo(f'Bootstrapping {department} department...')
             bootstrap_department(
