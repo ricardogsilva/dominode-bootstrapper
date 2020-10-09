@@ -96,14 +96,20 @@ CREATE OR REPLACE FUNCTION DomiNodeMoveTableToPublicSchema(qualifiedTableName va
         unqualifiedName varchar;
         publicQualifiedName varchar;
         ownerRole varchar;
+        department varchar;
+        department_geoserver_user varchar;
     BEGIN
         schemaName := split_part(qualifiedTableName, '.', 1);
         unqualifiedName := replace(qualifiedTableName, concat(schemaName, '.'), '');
         unqualifiedName := replace(unqualifiedName, '"', '');
         publicQualifiedName := concat('public.', format('%I', unqualifiedName));
+        department := split_part(unqualifiedName, '_', 1);
+        department_geoserver_user := concat(department, '_geoserver');
         EXECUTE format('SELECT tableowner FROM pg_tables where schemaname=%L AND tablename=%L', schemaName, unqualifiedName) INTO ownerRole;
         EXECUTE format('ALTER TABLE %s SET SCHEMA public', qualifiedTableName);
-        EXECUTE format('GRANT SELECT ON %s TO public', publicQualifiedName);
+        EXECUTE format('REVOKE SELECT ON %s FROM public', publicQualifiedName);
+        EXECUTE format('GRANT SELECT ON %s TO dominode_user', publicQualifiedName);
+        EXECUTE format('GRANT SELECT ON %s TO %s', publicQualifiedName, department_geoserver_user);
         EXECUTE format('REVOKE INSERT, UPDATE, DELETE ON %s FROM %I', publicQualifiedName, ownerRole);
 
     END
