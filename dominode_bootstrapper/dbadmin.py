@@ -270,7 +270,6 @@ def bootstrap_department(
         utils.get_geoserver_db_username(department),
         geoserver_password,
         db_connection,
-        parent_roles=[generic_user_name]
     )
     if department == 'lsd':
         bootstrap_lsd_topomaps(db_connection, user_role)
