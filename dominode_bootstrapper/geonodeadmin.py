@@ -267,7 +267,8 @@ class GeoServerManager:
             port: int,
             database: str,
             user: str,
-            password: str
+            password: str,
+            schema: str = 'public'
     ):
         response = self.client.post(
             f'{self.base_url}/rest/workspaces/{workspace_name}/datastores',
@@ -281,6 +282,7 @@ class GeoServerManager:
                             {'@key': 'host', '$': host},
                             {'@key': 'port', '$': str(port)},
                             {'@key': 'database', '$': database},
+                            {'@key': 'schema', '$': schema},
                             {'@key': 'user', '$': user},
                             {'@key': 'passwd', '$': password},
                             {'@key': 'dbtype', '$': 'postgis'},
