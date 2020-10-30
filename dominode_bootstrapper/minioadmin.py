@@ -37,6 +37,7 @@ SUCCESS = "success"
 DEFAULT_CONFIG_DIR = Path('~/.mc').expanduser()
 DOMINODE_STAGING_BUCKET_NAME: str = 'dominode-staging'
 PUBLIC_BUCKET_NAME: str = 'public'
+PRIVILEGED_BUCKET_NAME: str = 'privileged'
 POLICY_VERSION: str = '2012-10-17'
 
 config = utils.load_config()
@@ -55,17 +56,27 @@ def bootstrap(
 
     This function performs the following:
 
-    - create a common staging bucket
-    - create a public bucket
-    - set anonymous policy for public bucket to dowload only
-    - add default departments
+    - create common `staging` bucket
+
+    - create `public` bucket to house published datasets that are to be public
+
+    - create `privileged` bucket to house published datasets that are to be
+      accessed by privileged users
+
+    - set anonymous policy for `public` bucket to download only
+
+    - add default departments' buckets
 
     """
 
     manager = MinioManager(alias, access_key, secret_key, host, port, protocol)
+    typer.echo(f'Creating {DOMINODE_STAGING_BUCKET_NAME!r} bucket...')
     manager.create_bucket(DOMINODE_STAGING_BUCKET_NAME)
+    typer.echo(f'Creating {PUBLIC_BUCKET_NAME!r} bucket...')
     manager.create_bucket(PUBLIC_BUCKET_NAME)
     manager.set_anonymous_policy(PUBLIC_BUCKET_NAME)
+    typer.echo(f'Creating {PRIVILEGED_BUCKET_NAME!r} bucket...')
+    manager.create_bucket(PRIVILEGED_BUCKET_NAME)
     typer.echo(f'Bootstrapping departments...')
     for department in utils.get_departments(config):
         add_department(
@@ -108,7 +119,14 @@ def add_department(
     manager.create_bucket(f'{staging_dir}')
     public_dir = get_public_root_dir_name(name)
     typer.echo(f'Creating {public_dir!r} dir...')
-    manager.create_bucket(f'{public_dir}')
+    manager.create_bucket(public_dir)
+    privileged_dir = get_privileged_root_dir_name(name)
+    typer.echo(f'Creating {privileged_dir!r} dir...')
+    manager.create_bucket(privileged_dir)
+    if name == 'lsd':
+        topomaps_bucket_name = get_topomaps_bucket_name()
+        typer.echo(f'Creating {topomaps_bucket_name!r} bucket...')
+        manager.create_bucket(topomaps_bucket_name)
 
 
 @app.command()
@@ -332,13 +350,15 @@ def get_user_policy(departments: typing.List[str]):
                 'Effect': 'Allow',
                 'Resource': [
                     f'arn:aws:s3:::{DOMINODE_STAGING_BUCKET_NAME}/*',
-                    f'arn:aws:s3:::{PUBLIC_BUCKET_NAME}/*'
+                    f'arn:aws:s3:::{PUBLIC_BUCKET_NAME}/*',
+                    f'arn:aws:s3:::{PRIVILEGED_BUCKET_NAME}/*',
                 ]
             },
         ]
     }
     deny_bucket_index = 0
     allow_full_access_index = 1
+    read_only_index = 2
     for department in departments:
         # tweak statement ids to make them unique
         for statement in policy['Statement']:
@@ -352,6 +372,14 @@ def get_user_policy(departments: typing.List[str]):
             f'arn:aws:s3:::{get_staging_bucket_name(department)}/*',
             f'arn:aws:s3:::{get_dominode_staging_root_dir_name(department)}*',
         ])
+        if department == 'lsd':
+            topomaps_bucket = get_topomaps_bucket_name()
+            policy['Statement'][deny_bucket_index]['Resource'].append(
+                f'arn:aws:s3:::{topomaps_bucket}'
+            )
+            policy['Statement'][read_only_index]['Resource'].append(
+                f'arn:aws:s3:::{topomaps_bucket}/*'
+            )
     return policy
 
 
@@ -368,7 +396,7 @@ def get_editor_policy(departments: typing.List[str]):
                 'Effect': 'Deny',
                 'Resource': [
                     f'arn:aws:s3:::{DOMINODE_STAGING_BUCKET_NAME}',
-                    # add all department staging buckets
+                    # add all department staging buckets (see below)
                 ]
             },
             {
@@ -393,7 +421,8 @@ def get_editor_policy(departments: typing.List[str]):
                 'Effect': 'Allow',
                 'Resource': [
                     f'arn:aws:s3:::{DOMINODE_STAGING_BUCKET_NAME}/*',
-                    f'arn:aws:s3:::{PUBLIC_BUCKET_NAME}/*'
+                    f'arn:aws:s3:::{PUBLIC_BUCKET_NAME}/*',
+                    f'arn:aws:s3:::{PRIVILEGED_BUCKET_NAME}/*',
                 ]
             },
         ]
@@ -413,7 +442,16 @@ def get_editor_policy(departments: typing.List[str]):
             f'arn:aws:s3:::{get_staging_bucket_name(department)}/*',
             f'arn:aws:s3:::{get_dominode_staging_root_dir_name(department)}*',
             f'arn:aws:s3:::{get_public_root_dir_name(department)}*',
+            f'arn:aws:s3:::{get_privileged_root_dir_name(department)}*',
         ])
+        if department == 'lsd':  # also tweak permissions of topomaps bucket
+            topomaps_bucket = get_topomaps_bucket_name()
+            policy['Statement'][deny_bucket_index]['Resource'].append(
+                f'arn:aws:s3:::{topomaps_bucket}'
+            )
+            policy['Statement'][allow_full_access_index]['Resource'].append(
+                f'arn:aws:s3:::{topomaps_bucket}/*'
+            )
     return policy
 
 
@@ -574,12 +612,20 @@ def get_staging_bucket_name(department: str) -> str:
     return f'{department}-staging'
 
 
+def get_topomaps_bucket_name() -> str:
+    return 'lsd-topomaps'
+
+
 def get_dominode_staging_root_dir_name(department: str) -> str:
     return f'{DOMINODE_STAGING_BUCKET_NAME}/{department}/'
 
 
 def get_public_root_dir_name(department: str) -> str:
     return f'{PUBLIC_BUCKET_NAME}/{department}/'
+
+
+def get_privileged_root_dir_name(department: str) -> str:
+    return f'{PRIVILEGED_BUCKET_NAME}/{department}/'
 
 
 def get_policy_name(role: UserRole, departments: typing.List[str]) -> str:
@@ -602,7 +648,7 @@ def execute_command(
         arguments: typing.Optional[str] = None,
 ):
     full_command = f'mc --json {command} {"/".join((alias, arguments or ""))}'
-    typer.echo(full_command)
+    # typer.echo(full_command)
     parsed_command = shlex.split(full_command)
     process_env = os.environ.copy()
     process_env.update({
@@ -635,7 +681,7 @@ def execute_minio_admin_command(
 ) -> typing.List:
     """Uses the ``mc`` binary to perform admin tasks on minIO servers"""
     full_command = f'mc --json admin {command} {alias} {arguments or ""}'
-    typer.echo(f'Executing admin command: {full_command!r}...')
+    # typer.echo(f'Executing admin command: {full_command!r}...')
     parsed_command = shlex.split(full_command)
     process_env = os.environ.copy()
     process_env.update({
